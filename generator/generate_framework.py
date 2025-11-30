@@ -1,183 +1,179 @@
-#!/usr/bin/env python3
-"""Simple generator helper included in the bundle.
-This script discovers SQL files and writes simple wrapper and test files.
-It is intentionally minimal; it is a scaffolding helper.
-"""
 import os
-import re
+import sys
 import argparse
-from pathlib import Path
-from textwrap import dedent
-import yaml
 
-SQL_ROOT_DEFAULT = "sql"
-WRAPPER_ROOT = "wrappers"
-TEST_ROOT = "tests"
-TEST_DATA_ROOT = "test_data"
-TEST_CFG = "test_config/test_map.yaml"
+# Make root importable
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-WRAPPER_TEMPLATE = '''from utils.sql_loader import load_sql
-
-def {function_name}(spark):
-    """Auto-generated wrapper to execute SQL: {sql_path}"""
-    sql = load_sql(r"{sql_path}")
-    return spark.sql(sql)
-'''
-
-TEST_TEMPLATE = dedent('''import os
-import pytest
 from utils.sql_loader import load_sql
 from utils.sql_table_parser import extract_tables_with_fullnames
-from utils.data_loader import discover_table_parquet_info, resolve_parquet_for_case, load_csv_as_df
-from utils.csv_schema_resolver import normalize_csv_df
-from {import_path} import {function_name}
 
-SQL_PATH = r"{sql_path}"
-MODULE_KEY = r"{module_key}"
-MODULE_FOLDER = os.path.join(r"{test_data_root}", MODULE_KEY)
 
-def _collect_table_info():
-    tables_full = extract_tables_with_fullnames(load_sql(SQL_PATH))
-    tables = [b for (_, b) in tables_full]
-    info = {{}}
-    for t in tables:
-        info[t] = discover_table_parquet_info(MODULE_FOLDER, t)
-    return info
+# ---------------------------------------------------------
+# EXCLUDE FOLDERS when scan-all is used
+# ---------------------------------------------------------
+EXCLUDE_FOLDERS = {
+    "generator", "utils", "wrappers", "tests", "test_data",
+    ".git", ".idea", ".vscode", "venv", "__pycache__",
+}
 
-def _all_case_ids(table_info):
-    s = set()
-    for t,i in table_info.items():
-        s.update(i.get("cases", {{}}).keys())
-    return sorted(s)
+def is_excluded(path):
+    parts = path.replace("\\", "/").split("/")
+    return any(p in EXCLUDE_FOLDERS for p in parts)
 
-def _per_table_params():
-    info = _collect_table_info()
-    params = []
-    for t,i in info.items():
-        if i.get("default"):
-            params.append((t, "default", i["default"]))
-        for caseid, path in sorted(i.get("cases", {{}}).items()):
-            params.append((t, caseid, path))
-    return params
 
-@pytest.mark.parametrize("table,caseid,path", _per_table_params())
-def test_{base_name}_per_table(spark, table, caseid, path):
-    assert os.path.exists(path), f"Input CSV missing: {{path}}"
-    df_raw = load_csv_as_df(spark, path)
-    df = normalize_csv_df(df_raw, table_name=table)
-    df.createOrReplaceTempView(table)
-    res = {function_name}(spark)
-    assert res is not None
-    _ = res.count()
+# ---------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------
+def derive_module_key(sql_rel_path):
+    module_key = os.path.splitext(sql_rel_path)[0]
+    module_key = module_key.replace("\\", "/")
+    wrapper_name = module_key.replace("/", "_").replace("-", "_")
+    return module_key, wrapper_name
 
-def _bundle_params():
-    info = _collect_table_info()
-    case_ids = _all_case_ids(info)
-    bundles = []
-    for case in case_ids:
-        resolved = {{}}
-        skip = False
-        for t,i in info.items():
-            p = resolve_parquet_for_case(i, case)
-            if not p:
-                skip = True
-                break
-            resolved[t] = p
-        if not skip:
-            bundles.append((case, resolved))
-    return bundles
 
-for caseid, mapping in _bundle_params():
-    def _make_test(caseid, mapping):
-        def test_fn(spark):
-            for t, p in mapping.items():
-                df_raw = load_csv_as_df(spark, p)
-                df = normalize_csv_df(df_raw, table_name=t)
-                df.createOrReplaceTempView(t)
-            res = {function_name}(spark)
-            assert res is not None
-            _ = res.count()
-        test_fn.__name__ = f"test_{base_name}_bundle_{{caseid}}"
-        return test_fn
-    globals()[f"test_{base_name}_bundle_{{caseid}}"] = _make_test(caseid, mapping)
-''')
+def generate_wrapper(sql_rel_path, wrapper_path, wrapper_name):
+    code = (
+        "from utils.sql_loader import load_sql\n"
+        f"def run_{wrapper_name}(spark):\n"
+        f"    sql = load_sql(r\"{sql_rel_path}\")\n"
+        f"    return spark.sql(sql)\n"
+    )
+    os.makedirs(os.path.dirname(wrapper_path), exist_ok=True)
+    with open(wrapper_path, "w") as f:
+        f.write(code)
 
-def ensure_dirs():
-    Path(WRAPPER_ROOT).mkdir(parents=True, exist_ok=True)
-    Path(TEST_ROOT).mkdir(parents=True, exist_ok=True)
-    Path(TEST_DATA_ROOT).mkdir(parents=True, exist_ok=True)
-    Path("test_config").mkdir(parents=True, exist_ok=True)
-    Path("utils").mkdir(parents=True, exist_ok=True)
 
-def snake(s: str) -> str:
-    return re.sub(r'[^0-9a-zA-Z_]+', '_', s).strip('_').lower()
+def generate_test(sql_rel_path, module_key, wrapper_name, test_path):
+    code = (
+        "import os\n"
+        "import pytest\n"
+        "from utils.sql_loader import load_sql\n"
+        "from utils.sql_table_parser import extract_tables_with_fullnames\n"
+        "from utils.data_loader import discover_table_parquet_info, resolve_parquet_for_case, load_csv_as_df\n"
+        "from utils.csv_schema_resolver import normalize_csv_df\n"
+        f"from wrappers.{wrapper_name} import run_{wrapper_name}\n\n"
 
-def load_or_create_cfg():
-    if os.path.exists(TEST_CFG):
-        with open(TEST_CFG, 'r') as f:
-            import yaml
-            return yaml.safe_load(f) or {}
-    return {}
+        f"SQL_PATH = r\"{sql_rel_path}\"\n"
+        f"MODULE_KEY = r\"{module_key}\"\n"
+        "MODULE_FOLDER = os.path.join('test_data', MODULE_KEY)\n\n"
 
-def save_cfg(cfg):
-    with open(TEST_CFG, 'w', encoding='utf-8') as f:
-        import yaml
-        yaml.dump(cfg, f, sort_keys=True)
+        "def _collect_tables():\n"
+        "    sql = load_sql(SQL_PATH)\n"
+        "    return [b for (_, b) in extract_tables_with_fullnames(sql)]\n\n"
 
-def discover_sql_files(sql_root, scan_all=False):
-    files = []
-    if scan_all:
-        for p in Path('.').rglob("*.sql"):
-            files.append(str(p).replace("\\", "/"))
-    else:
-        for p in Path(sql_root).rglob("*.sql"):
-            files.append(str(p).replace("\\", "/"))
-    return sorted(files)
+        "def _bundle_params():\n"
+        "    tables = _collect_tables()\n"
+        "    info = {t: discover_table_parquet_info(MODULE_FOLDER, t) for t in tables}\n"
+        "    case_ids = set(['default'])\n"
+        "    for t, ti in info.items(): case_ids.update(ti.get('cases', {}).keys())\n"
+        "    bundles = []\n"
+        "    for cid in sorted(case_ids):\n"
+        "        mapping, valid = {}, True\n"
+        "        for t, ti in info.items():\n"
+        "            p = resolve_parquet_for_case(ti, cid) or ti.get('default')\n"
+        "            if not p: valid = False; break\n"
+        "            mapping[t] = p\n"
+        "        if valid: bundles.append((cid, mapping))\n"
+        "    return bundles\n\n"
 
-def import_path_from_wrapper(wrapper_path):
-    p = Path(wrapper_path)
-    parts = list(p.with_suffix('').parts)
-    return ".".join(parts)
+        "@pytest.mark.parametrize('caseid, mapping', _bundle_params())\n"
+        f"def test_{wrapper_name}_bundle(spark, caseid, mapping):\n"
+        "    for table, path in mapping.items():\n"
+        "        assert os.path.exists(path), f'Missing CSV: {table}: {path}'\n"
+        "        df = load_csv_as_df(spark, path)\n"
+        "        df = normalize_csv_df(df, table_name=table)\n"
+        "        df.createOrReplaceTempView(table)\n"
+        "    out = run_{wrapper_name}(spark)\n"
+        "    assert out is not None\n"
+        "    _ = out.count()\n"
+    )
+    os.makedirs(os.path.dirname(test_path), exist_ok=True)
+    with open(test_path, "w") as f:
+        f.write(code)
 
-def generate(sql_root, scan_all):
-    ensure_dirs()
-    cfg = load_or_create_cfg()
-    files = discover_sql_files(sql_root, scan_all)
-    if not files:
-        print("No SQL files found.")
-        return
-    for sql_path in files:
-        if not scan_all and sql_path.startswith(sql_root):
-            rel = os.path.relpath(sql_path, sql_root)
-        else:
-            rel = os.path.relpath(sql_path)
-        module_key = rel.replace("\\", "/").replace(".sql", "")
-        wrapper_path = os.path.join(WRAPPER_ROOT, rel.replace(".sql", ".py"))
-        test_path = os.path.join(TEST_ROOT, f"test_{snake(module_key.replace('/', '_'))}.py")
-        os.makedirs(os.path.dirname(wrapper_path), exist_ok=True)
-        os.makedirs(os.path.dirname(test_path), exist_ok=True)
-        function_name = f"run_{snake(Path(sql_path).stem)}"
-        import_path = import_path_from_wrapper(wrapper_path)
-        with open(wrapper_path, 'w', encoding='utf-8') as wf:
-            wf.write(WRAPPER_TEMPLATE.format(function_name=function_name, sql_path=sql_path))
-        with open(test_path, 'w', encoding='utf-8') as tf:
-            tf.write(TEST_TEMPLATE.format(
-                import_path=import_path,
-                function_name=function_name,
-                sql_path=sql_path,
-                module_key=module_key,
-                base_name=snake(Path(sql_path).stem),
-                test_data_root=TEST_DATA_ROOT
-            ))
-        cfg[module_key] = {"csv_folder": f"{TEST_DATA_ROOT}/{module_key}"}
-        print(f"Generated wrapper: {wrapper_path}")
-        print(f"Generated test:    {test_path}")
-    save_cfg(cfg)
-    print(f"Updated config: {TEST_CFG}")
 
+# ---------------------------------------------------------
+# SCAN FUNCTIONS
+# ---------------------------------------------------------
+def scan_specific_folder(sql_root):
+    print(f"\n🔍 Scanning specific folder: {sql_root}\n")
+
+    for base, _, files in os.walk(sql_root):
+        for fname in files:
+            if not fname.lower().endswith(".sql"):
+                continue
+
+            sql_path = os.path.join(base, fname)
+            rel_path = os.path.relpath(sql_path).replace("\\", "/")
+
+            _generate_for_sql_file(rel_path)
+
+
+def scan_entire_repository():
+    print("\n🔍 Scanning entire repository (scan-all)...\n")
+
+    for base, dirs, files in os.walk("."):
+        if is_excluded(base):
+            continue
+
+        for fname in files:
+            if not fname.lower().endswith(".sql"):
+                continue
+
+            sql_path = os.path.join(base, fname)
+            rel_path = os.path.relpath(sql_path).replace("\\", "/")
+
+            _generate_for_sql_file(rel_path)
+
+
+# ---------------------------------------------------------
+# GENERATION FUNCTION
+# ---------------------------------------------------------
+def _generate_for_sql_file(rel_path):
+
+    module_key, wrapper_name = derive_module_key(rel_path)
+
+    td_folder = os.path.join("test_data", module_key)
+    os.makedirs(td_folder, exist_ok=True)
+
+    wrapper_path = os.path.join("wrappers", f"{wrapper_name}.py")
+    test_path = os.path.join("tests", f"test_{wrapper_name}.py")
+
+    print(f"📄 SQL: {rel_path}")
+    print(f"   → Wrapper: {wrapper_path}")
+    print(f"   → Test:    {test_path}")
+    print(f"   → Inputs:  {td_folder}\n")
+
+    generate_wrapper(rel_path, wrapper_path, wrapper_name)
+    generate_test(rel_path, module_key, wrapper_name, test_path)
+
+
+# ---------------------------------------------------------
+# CLI HANDLER
+# ---------------------------------------------------------
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--sql-root", default=SQL_ROOT_DEFAULT, help="SQL root folder")
-    parser.add_argument("--scan-all", action="store_true", help="Scan entire repo for .sql")
+    parser = argparse.ArgumentParser(description="SQL Test Generator")
+
+    parser.add_argument(
+        "--sql-root",
+        type=str,
+        help="Scan only this folder for SQL files (default: sql/)",
+        default=None
+    )
+
+    parser.add_argument(
+        "--scan-all",
+        action="store_true",
+        help="Scan the entire repo for SQL files"
+    )
+
     args = parser.parse_args()
-    generate(args.sql_root, args.scan_all)
+
+    if args.scan_all:
+        scan_entire_repository()
+    else:
+        sql_root = args.sql_root or "sql"
+        scan_specific_folder(sql_root)
+
+    print("\n✅ Done.\n")

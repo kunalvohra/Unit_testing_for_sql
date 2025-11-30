@@ -4,73 +4,38 @@ from utils.sql_loader import load_sql
 from utils.sql_table_parser import extract_tables_with_fullnames
 from utils.data_loader import discover_table_parquet_info, resolve_parquet_for_case, load_csv_as_df
 from utils.csv_schema_resolver import normalize_csv_df
-from wrappers.src.finance.revenue.calc_revenue import run_calc_revenue
+from wrappers.src_finance_revenue_calc_revenue import run_src_finance_revenue_calc_revenue
 
 SQL_PATH = r"src/finance/revenue/calc_revenue.sql"
 MODULE_KEY = r"src/finance/revenue/calc_revenue"
-MODULE_FOLDER = os.path.join(r"test_data", MODULE_KEY)
+MODULE_FOLDER = os.path.join('test_data', MODULE_KEY)
 
-def _collect_table_info():
-    tables_full = extract_tables_with_fullnames(load_sql(SQL_PATH))
-    tables = [b for (_, b) in tables_full]
-    info = {}
-    for t in tables:
-        info[t] = discover_table_parquet_info(MODULE_FOLDER, t)
-    return info
-
-def _all_case_ids(table_info):
-    s = set()
-    for t,i in table_info.items():
-        s.update(i.get("cases", {}).keys())
-    return sorted(s)
-
-def _per_table_params():
-    info = _collect_table_info()
-    params = []
-    for t,i in info.items():
-        if i.get("default"):
-            params.append((t, "default", i["default"]))
-        for caseid, path in sorted(i.get("cases", {}).items()):
-            params.append((t, caseid, path))
-    return params
-
-@pytest.mark.parametrize("table,caseid,path", _per_table_params())
-def test_calc_revenue_per_table(spark, table, caseid, path):
-    assert os.path.exists(path), f"Input CSV missing: {path}"
-    df_raw = load_csv_as_df(spark, path)
-    df = normalize_csv_df(df_raw, table_name=table)
-    df.createOrReplaceTempView(table)
-    res = run_calc_revenue(spark)
-    assert res is not None
-    _ = res.count()
+def _collect_tables():
+    sql = load_sql(SQL_PATH)
+    return [b for (_, b) in extract_tables_with_fullnames(sql)]
 
 def _bundle_params():
-    info = _collect_table_info()
-    case_ids = _all_case_ids(info)
+    tables = _collect_tables()
+    info = {t: discover_table_parquet_info(MODULE_FOLDER, t) for t in tables}
+    case_ids = set(['default'])
+    for t, ti in info.items(): case_ids.update(ti.get('cases', {}).keys())
     bundles = []
-    for case in case_ids:
-        resolved = {}
-        skip = False
-        for t,i in info.items():
-            p = resolve_parquet_for_case(i, case)
-            if not p:
-                skip = True
-                break
-            resolved[t] = p
-        if not skip:
-            bundles.append((case, resolved))
+    for cid in sorted(case_ids):
+        mapping, valid = {}, True
+        for t, ti in info.items():
+            p = resolve_parquet_for_case(ti, cid) or ti.get('default')
+            if not p: valid = False; break
+            mapping[t] = p
+        if valid: bundles.append((cid, mapping))
     return bundles
 
-for caseid, mapping in _bundle_params():
-    def _make_test(caseid, mapping):
-        def test_fn(spark):
-            for t, p in mapping.items():
-                df_raw = load_csv_as_df(spark, p)
-                df = normalize_csv_df(df_raw, table_name=t)
-                df.createOrReplaceTempView(t)
-            res = run_calc_revenue(spark)
-            assert res is not None
-            _ = res.count()
-        test_fn.__name__ = f"test_calc_revenue_bundle_{caseid}"
-        return test_fn
-    globals()[f"test_calc_revenue_bundle_{caseid}"] = _make_test(caseid, mapping)
+@pytest.mark.parametrize('caseid, mapping', _bundle_params())
+def test_src_finance_revenue_calc_revenue_bundle(spark, caseid, mapping):
+    for table, path in mapping.items():
+        assert os.path.exists(path), f'Missing CSV: {table}: {path}'
+        df = load_csv_as_df(spark, path)
+        df = normalize_csv_df(df, table_name=table)
+        df.createOrReplaceTempView(table)
+    out = run_{wrapper_name}(spark)
+    assert out is not None
+    _ = out.count()
