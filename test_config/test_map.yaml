@@ -1,0 +1,6 @@
+pipelines/sales/join_products:
+  csv_folder: test_data/pipelines/sales/join_products
+src/etl/hr/filter_employees:
+  csv_folder: test_data/src/etl/hr/filter_employees
+src/finance/revenue/calc_revenue:
+  csv_folder: test_data/src/finance/revenue/calc_revenue

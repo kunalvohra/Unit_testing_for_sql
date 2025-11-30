@@ -1,0 +1,4 @@
+order_id,customer_id,amount
+100,1,250
+101,1,100
+102,2,500

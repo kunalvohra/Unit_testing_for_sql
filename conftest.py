@@ -9,15 +9,28 @@ from utils.csv_schema_resolver import normalize_csv_df
 SQL_ROOTS = ["sql"]
 TEST_DATA_ROOT = "test_data"
 
+JAVA_HOME = r"C:\Users\vohrakb\Downloads\OpenJDK11U-jdk_x64_windows_hotspot_11.0.29_7\jdk-11.0.29+7"
+
+os.environ["JAVA_HOME"] = JAVA_HOME
+os.environ["PATH"] = rf"{JAVA_HOME}\bin;" + os.environ["PATH"]
+
+# This helps Spark know exactly which Java home to use:
+os.environ["PYSPARK_SUBMIT_ARGS"] = (
+    rf'--driver-java-options=-Djava.home="{JAVA_HOME}" pyspark-shell'
+)
+
 @pytest.fixture(scope="session")
 def spark():
+    
     spark = (SparkSession.builder
-             .master("local[*]")
-             .appName("AutoSQLUnitTests")
-             .config("spark.sql.shuffle.partitions", "1")
-             .config("spark.ui.enabled", "false")
-             .getOrCreate())
-    return spark
+         .master("local[*]")
+         .appName("AutoSQLUnitTests")
+         .config("spark.sql.shuffle.partitions", "1")
+         .config("spark.ui.enabled", "false")
+         .getOrCreate())
+
+
+# ----------------------------
 
 @pytest.fixture(scope="session", autouse=True)
 def prepare_global_views(spark):
