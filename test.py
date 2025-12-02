@@ -135,7 +135,7 @@ from utils.sql_table_parser import extract_tables_with_fullnames
 
 EXCLUDE = {
     "generator", "utils", "wrappers", "tests", "test_data",
-    ".git", ".vscode", ".idea", "venv", "__pycache__"
+    ".git", ".vscode", ".idea", "venv", "__pycache__","ipynb_checkpoints"
 }
 
 def is_excluded(path):
@@ -221,7 +221,7 @@ def generate_test(rel_path, module_key, wrapper_name, test_path):
 
 
 def scan_folder(root):
-    print(f\"\\n🔍 Scanning folder: {root}\\n\")
+    print(f"\\n🔍 Scanning folder: {root}\\n")
     for base, _, files in os.walk(root):
         for fname in files:
             if fname.lower().endswith(".sql"):
@@ -230,7 +230,7 @@ def scan_folder(root):
 
 
 def scan_all():
-    print(\"\\n🔍 Scanning ENTIRE repository...\\n\")
+    print("\\n🔍 Scanning ENTIRE repository...\\n")
     for base, _, files in os.walk("."):
         if is_excluded(base): continue
         for fname in files:
@@ -248,10 +248,10 @@ def process_sql(rel_path):
     wrapper_path = os.path.join("wrappers", f"{wrapper_name}.py")
     test_path = os.path.join("tests", f"test_{wrapper_name}.py")
 
-    print(f\"📄 SQL: {rel_path}\")
-    print(f\"   → Wrapper: {wrapper_path}\")
-    print(f\"   → Test:    {test_path}\")
-    print(f\"   → Inputs:  {td_folder}\\n\")
+    print(f"📄 SQL: {rel_path}")
+    print(f"   → Wrapper: {wrapper_path}")
+    print(f"   → Test:    {test_path}")
+    print(f"   → Inputs:  {td_folder}\\n")
 
     generate_wrapper(rel_path, wrapper_path, wrapper_name)
     generate_test(rel_path, module_key, wrapper_name, test_path)
