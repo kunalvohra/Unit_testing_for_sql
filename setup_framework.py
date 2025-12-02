@@ -16,14 +16,14 @@ def setup_framework():
 
     print("\n🚀 Creating FULL SQL Testing Framework...\n")
 
-    # ===============================================================
+    # ============================================================
     # utils/__init__.py
-    # ===============================================================
+    # ============================================================
     write_file("utils/__init__.py", "# utils package\n")
 
-    # ===============================================================
+    # ============================================================
     # utils/sql_loader.py
-    # ===============================================================
+    # ============================================================
     write_file("utils/sql_loader.py", """
 import os
 
@@ -34,9 +34,9 @@ def load_sql(path):
         return f.read()
 """)
 
-    # ===============================================================
+    # ============================================================
     # utils/sql_table_parser.py
-    # ===============================================================
+    # ============================================================
     write_file("utils/sql_table_parser.py", r"""
 import re
 
@@ -50,9 +50,9 @@ def extract_tables_with_fullnames(sql_text):
     return tables
 """)
 
-    # ===============================================================
+    # ============================================================
     # utils/data_loader.py
-    # ===============================================================
+    # ============================================================
     write_file("utils/data_loader.py", """
 import os
 import glob
@@ -77,30 +77,93 @@ def resolve_parquet_for_case(info, caseid):
     return info["cases"].get(caseid)
 """)
 
-    # ===============================================================
+    # ============================================================
     # utils/csv_schema_resolver.py
-    # ===============================================================
+    # ============================================================
     write_file("utils/csv_schema_resolver.py", """
 def normalize_csv_df(df, table_name=None):
     return df
 """)
 
-    # ===============================================================
-    # utils/assertions.py
-    # ===============================================================
+    # ============================================================
+    # utils/assertions.py (UPDATED — FLOAT/DOUBLE/LONG/INT)
+    # ============================================================
     write_file("utils/assertions.py", """
+from pyspark.sql import functions as F
+from pyspark.sql.types import (
+    IntegerType, LongType, FloatType, DoubleType, DecimalType
+)
+
+FLOAT_TOLERANCE = 1e-6
+
+def _coerce_numeric_types(actual, expected):
+    actual_schema = actual.dtypes
+    expected_schema = expected.dtypes
+    cast_map = {}
+
+    for (col_a, type_a), (col_e, type_e) in zip(actual_schema, expected_schema):
+
+        if col_a != col_e:
+            raise AssertionError(f"Column name mismatch: {col_a} != {col_e}")
+
+        if type_a == type_e:
+            continue
+
+        if {type_a, type_e} == {"int", "bigint"}:
+            cast_map[col_a] = IntegerType() if type_e == "int" else LongType()
+
+        elif {type_a, type_e} == {"float", "double"}:
+            cast_map[col_a] = DoubleType()
+
+        elif (type_a in ("int", "bigint") and type_e == "double") or \
+             (type_e in ("int", "bigint") and type_a == "double"):
+            cast_map[col_a] = DoubleType()
+
+        elif ("decimal" in type_a and type_e == "double") or \
+             ("decimal" in type_e and type_a == "double"):
+            cast_map[col_a] = DoubleType()
+
+        else:
+            raise AssertionError(
+                f"Unsupported type mismatch for column '{col_a}': {type_a} != {type_e}"
+            )
+
+    for col, target_type in cast_map.items():
+        actual = actual.withColumn(col, F.col(col).cast(target_type))
+
+    return actual, expected
+
+
 def assert_df_equal(actual, expected, msg=None):
-    assert actual.schema == expected.schema, f"Schema mismatch: {msg}"
 
-    actual_rows = [tuple(r) for r in actual.orderBy(*actual.columns).collect()]
-    expected_rows = [tuple(r) for r in expected.orderBy(*expected.columns).collect()]
+    actual, expected = _coerce_numeric_types(actual, expected)
 
-    assert actual_rows == expected_rows, f"Data mismatch: {msg}"
+    assert actual.schema == expected.schema, (
+        f"Schema mismatch after type alignment:\\n"
+        f"ACTUAL: {actual.schema}\\nEXPECTED: {expected.schema}\\n{msg}"
+    )
+
+    actual_rows = actual.orderBy(*actual.columns).collect()
+    expected_rows = expected.orderBy(*expected.columns).collect()
+
+    for a_row, e_row in zip(actual_rows, expected_rows):
+        for a, e in zip(a_row, e_row):
+
+            if a is None and e is None:
+                continue
+
+            if isinstance(a, float) or isinstance(e, float):
+                assert abs(float(a) - float(e)) <= FLOAT_TOLERANCE, \
+                    f"Float mismatch: {a} != {e} ({msg})"
+            else:
+                assert a == e, f"Value mismatch: {a} != {e} ({msg})"
+
+    return True
 """)
 
-    # ===============================================================
+    # ============================================================
     # conftest.py
-    # ===============================================================
+    # ============================================================
     write_file("conftest.py", """
 import pytest
 from pyspark.sql import SparkSession
@@ -119,10 +182,10 @@ def spark():
     spark.stop()
 """)
 
-    # ===============================================================
-    # generator/generate_framework.py — FULL, EXPECTED OUTPUT + SCAN ALL
-    # ===============================================================
-    generate_framework = r'''
+    # ============================================================
+    # generator/generate_framework.py
+    # ============================================================
+    write_file("generator/generate_framework.py", r'''
 import os
 import sys
 import argparse
@@ -133,20 +196,16 @@ from utils.sql_loader import load_sql
 from utils.sql_table_parser import extract_tables_with_fullnames
 
 
-EXCLUDE = {
-    "generator", "utils", "wrappers", "tests", "test_data",
-    ".git", ".vscode", ".idea", "venv", "__pycache__","ipynb_checkpoint"
-}
+EXCLUDE = {"generator","utils","wrappers","tests","test_data",".git",".vscode","venv","__pycache__"}
 
 def is_excluded(path):
     parts = path.replace("\\", "/").split("/")
     return any(p in EXCLUDE for p in parts)
 
-
 def derive_module_key(rel_path):
     module_key = os.path.splitext(rel_path)[0]
     module_key = module_key.replace("\\", "/")
-    wrapper_name = module_key.replace("/", "_").replace("-", "_")
+    wrapper_name = module_key.replace("/", "_")
     return module_key, wrapper_name
 
 
@@ -198,45 +257,25 @@ def generate_test(rel_path, module_key, wrapper_name, test_path):
 
         "@pytest.mark.parametrize('caseid, mapping', _bundle_params())\n"
         f"def test_{wrapper_name}_bundle(spark, caseid, mapping):\n"
-        "    # load inputs\n"
         "    for table, path in mapping.items():\n"
         "        df = load_csv_as_df(spark, path)\n"
         "        df = normalize_csv_df(df, table_name=table)\n"
         "        df.createOrReplaceTempView(table)\n\n"
 
-        "    # run SQL\n"
         f"    actual = run_{wrapper_name}(spark)\n\n"
 
-        "    # expected output file\n"
         "    expected_path = os.path.join(MODULE_FOLDER, f\"expected_{caseid}.csv\")\n"
         "    assert os.path.exists(expected_path), f\"Missing expected output: {expected_path}\"\n\n"
 
         "    expected = load_csv_as_df(spark, expected_path)\n"
         "    expected = normalize_csv_df(expected)\n\n"
+
         f"    assert_df_equal(actual, expected, msg=f'{wrapper_name} - {{caseid}}')\n"
     )
+
     os.makedirs(os.path.dirname(test_path), exist_ok=True)
     with open(test_path, "w") as f:
         f.write(code)
-
-
-def scan_folder(root):
-    print(f"\\n🔍 Scanning folder: {root}\\n")
-    for base, _, files in os.walk(root):
-        for fname in files:
-            if fname.lower().endswith(".sql"):
-                rel = os.path.relpath(os.path.join(base, fname)).replace("\\", "/")
-                process_sql(rel)
-
-
-def scan_all():
-    print("\\n🔍 Scanning ENTIRE repository...\\n")
-    for base, _, files in os.walk("."):
-        if is_excluded(base): continue
-        for fname in files:
-            if fname.lower().endswith(".sql"):
-                rel = os.path.relpath(os.path.join(base, fname)).replace("\\", "/")
-                process_sql(rel)
 
 
 def process_sql(rel_path):
@@ -251,16 +290,33 @@ def process_sql(rel_path):
     print(f"📄 SQL: {rel_path}")
     print(f"   → Wrapper: {wrapper_path}")
     print(f"   → Test:    {test_path}")
-    print(f"   → Inputs:  {td_folder}\\n")
+    print(f"   → Inputs:  {td_folder}\n")
 
     generate_wrapper(rel_path, wrapper_path, wrapper_name)
     generate_test(rel_path, module_key, wrapper_name, test_path)
 
 
+def scan_folder(root):
+    for base, _, files in os.walk(root):
+        for f in files:
+            if f.endswith(".sql"):
+                rel = os.path.relpath(os.path.join(base, f)).replace("\\", "/")
+                process_sql(rel)
+
+
+def scan_all():
+    for base, _, files in os.walk("."):
+        if is_excluded(base): continue
+        for f in files:
+            if f.endswith(".sql"):
+                rel = os.path.relpath(os.path.join(base, f)).replace("\\", "/")
+                process_sql(rel)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--sql-root", type=str, help="Folder to scan")
-    parser.add_argument("--scan-all", action="store_true", help="Scan entire repo")
+    parser.add_argument("--sql-root", type=str)
+    parser.add_argument("--scan-all", action="store_true")
     args = parser.parse_args()
 
     if args.scan_all:
@@ -270,27 +326,26 @@ if __name__ == "__main__":
         scan_folder(root)
 
     print("\n✔ DONE.\n")
+
 '''
+    )
 
-    write_file("generator/generate_framework.py", generate_framework)
-
-    # ===============================================================
-    # Create folders
-    # ===============================================================
+    # ============================================================
+    # Create empty folder structure
+    # ============================================================
     for folder in ["utils", "tests", "wrappers", "generator", "test_data", "sql"]:
         os.makedirs(folder, exist_ok=True)
 
     print("\n🎉 FRAMEWORK SETUP COMPLETE!")
     print("Next Steps:")
-    print("1️⃣ Place SQL in any folder or inside ./sql/")
+    print("1️⃣ Put SQL files under ./sql/ or anywhere else")
     print("2️⃣ Generate tests:")
     print("   python generator/generate_framework.py --scan-all")
-    print("   OR")
-    print("   python generator/generate_framework.py --sql-root sql")
-    print("3️⃣ Add inputs:")
+    print("3️⃣ Add input CSVs:")
     print("   test_data/<module_key>/<table>.csv")
+    print("4️⃣ Add expected outputs:")
     print("   test_data/<module_key>/expected_<case>.csv")
-    print("4️⃣ Run tests:")
+    print("5️⃣ Run tests:")
     print("   pytest -q\n")
 
 

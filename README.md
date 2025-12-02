@@ -3,6 +3,8 @@
 **Automated SQL Unit Testing with CSV Inputs, Multi-Case Support, Schema Inference & PySpark Execution**
 
 ![alt text](images/Unit_testing_for_sql_flow.png)
+![alt text](images/workflow.png)
+
 ---
 
 # **Overview**
@@ -38,40 +40,65 @@ SQL Files → Generator → Wrappers → Tests → Pytest + Spark → Compare Re
 # 🗁 **Folder Structure**
 
 ```
-sql_test_framework/
+your_repo/
+│
+├── setup_framework.py                ← One-time generator script
+│
+├── sql/                              ← SQL source files (optional default root)
+│     ├── calc_revenue.sql
+│     ├── finance/
+│     │      └── rollup.sql
+│     └── hr/
+│            └── employee_pay.sql
 │
 ├── generator/
-│     └── generate_framework.py      # Generates wrappers/tests/folders
+│     └── generate_framework.py       ← Auto-created generator
 │
-├── wrappers/                        # Auto-generated Python SQL wrappers
+├── utils/                            ← Utility modules (assertions, loaders, parsers)
+│     ├── __init__.py
+│     ├── sql_loader.py
+│     ├── sql_table_parser.py
+│     ├── data_loader.py
+│     ├── csv_schema_resolver.py
+│     └── assertions.py               ← Numeric tolerant comparator (int/long/float/double)
 │
-├── tests/
-│     └── test_<module>.py           # Auto-generated pytest files
+├── wrappers/                         ← Auto-generated wrappers (DO NOT EDIT MANUALLY)
+│     ├── src_finance_calc_revenue.py
+│     ├── finance_rollup.py
+│     └── hr_employee_pay.py
 │
-├── utils/
-│     ├── sql_loader.py              # Load SQL text
-│     ├── sql_table_parser.py        # Extract table names
-│     ├── data_loader.py             # Locate/load CSV input files
-│     ├── csv_schema_resolver.py     # Schema inference + normalization
-│     └── sql_metadata_extractor.py  # Column usage extraction
+├── tests/                            ← Auto-generated test files + your Python tests
+│     ├── test_src_finance_calc_revenue.py
+│     ├── test_finance_rollup.py
+│     ├── test_hr_employee_pay.py
+│     ├── test_logic1.py              ← Your own Python tests
+│     └── test_logic2.py
 │
-├── test_data/                       # User-provided CSV inputs (default + cases)
-│     └── <module_key>/
-│           ├── employees.csv
-│           ├── employees_case1.csv
-│           └── departments.csv
+├── test_data/                        ← Input data + expected outputs for each SQL file
+│     ├── src/finance/calc_revenue/
+│     │       ├── employees.csv                 ← input table
+│     │       ├── departments.csv               ← input table
+│     │       ├── employees_case1.csv           ← case-specific input
+│     │       ├── expected_default.csv          ← expected output for default
+│     │       ├── expected_case1.csv            ← expected output for case1
+│     │       └── expected_case2.csv            ← etc.
+│     │
+│     ├── finance/rollup/
+│     │       ├── orders.csv
+│     │       ├── expected_default.csv
+│     │       └── expected_case1.csv
+│     │
+│     └── hr/employee_pay/
+│             ├── salary.csv
+│             ├── bonus.csv
+│             └── expected_default.csv
 │
-├── expected/                        # Expected results (optional)
-│     └── <module_key>/
-│           └── output.csv
+├── conftest.py                        ← Shared Spark session for all tests
 │
-├── conftest.py                      # Global Spark session + view loader
+├── htmlcov/                           ← Coverage HTML output (created after pytest)
 │
-├── test_config/
-│     └── test_map.yaml              # Mapping of SQL → test data folder
-│
-├── requirements.txt
-└── README.md
+└── coverage.xml                       ← XML coverage output for CI/CD
+
 ```
 
 ---
