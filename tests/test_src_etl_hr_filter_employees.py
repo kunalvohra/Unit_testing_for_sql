@@ -25,26 +25,29 @@ def _bundle_params():
         mapping, valid = {}, True
         for t, ti in info.items():
             p = resolve_parquet_for_case(ti, cid) or ti.get('default')
-            if not p: valid = False; break
+            if not p:
+                valid = False
+                break
             mapping[t] = p
-        if valid: bundles.append((cid, mapping))
+        if valid:
+            bundles.append((cid, mapping))
     return bundles
 
 @pytest.mark.parametrize('caseid, mapping', _bundle_params())
 def test_src_etl_hr_filter_employees_bundle(spark, caseid, mapping):
-    # load inputs
+    # Load all input tables for this bundle
     for table, path in mapping.items():
+        assert os.path.exists(path), f'Missing input CSV for {table}: {path}'
         df = load_csv_as_df(spark, path)
         df = normalize_csv_df(df, table_name=table)
         df.createOrReplaceTempView(table)
 
-    # run SQL
+    # Execute SQL via wrapper
     actual = run_src_etl_hr_filter_employees(spark)
 
-    # expected output file
-    expected_path = os.path.join(MODULE_FOLDER, f"expected_{caseid}.csv")
-    assert os.path.exists(expected_path), f"Missing expected output: {expected_path}"
-
+    # Load expected output for this case
+    expected_path = os.path.join(MODULE_FOLDER, f"expected_{{caseid}}.csv")
+    assert os.path.exists(expected_path), f'Missing expected output: {expected_path}'
     expected = load_csv_as_df(spark, expected_path)
     expected = normalize_csv_df(expected)
 

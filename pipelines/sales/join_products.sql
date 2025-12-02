@@ -1,4 +1,4 @@
 SELECT s.sale_id, p.product_name 
-FROM sales s 
-JOIN products p 
+FROM db.sales s 
+JOIN db.products p 
 ON s.product_id = p.product_id;
