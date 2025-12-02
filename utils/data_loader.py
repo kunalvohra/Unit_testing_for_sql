@@ -12,8 +12,7 @@ def discover_table_parquet_info(folder, table):
         result["default"] = default_path
 
     for p in glob.glob(os.path.join(folder, f"{table}_case*.csv")):
-        file = os.path.basename(p)
-        cid = file.split("case")[-1].split(".")[0]
+        cid = os.path.basename(p).split("case")[-1].split(".")[0]
         result["cases"][cid] = p
 
     return result

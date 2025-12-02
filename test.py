@@ -135,7 +135,7 @@ from utils.sql_table_parser import extract_tables_with_fullnames
 
 EXCLUDE = {
     "generator", "utils", "wrappers", "tests", "test_data",
-    ".git", ".vscode", ".idea", "venv", "__pycache__","ipynb_checkpoints"
+    ".git", ".vscode", ".idea", "venv", "__pycache__","ipynb_checkpoint"
 }
 
 def is_excluded(path):
@@ -213,7 +213,7 @@ def generate_test(rel_path, module_key, wrapper_name, test_path):
 
         "    expected = load_csv_as_df(spark, expected_path)\n"
         "    expected = normalize_csv_df(expected)\n\n"
-        "    assert_df_equal(actual, expected, msg=f'{wrapper_name} - {caseid}')\n"
+        f"    assert_df_equal(actual, expected, msg=f'{wrapper_name} - {{caseid}}')\n"
     )
     os.makedirs(os.path.dirname(test_path), exist_ok=True)
     with open(test_path, "w") as f:

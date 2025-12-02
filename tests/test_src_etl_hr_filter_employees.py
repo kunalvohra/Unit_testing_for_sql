@@ -4,6 +4,7 @@ from utils.sql_loader import load_sql
 from utils.sql_table_parser import extract_tables_with_fullnames
 from utils.data_loader import discover_table_parquet_info, resolve_parquet_for_case, load_csv_as_df
 from utils.csv_schema_resolver import normalize_csv_df
+from utils.assertions import assert_df_equal
 from wrappers.src_etl_hr_filter_employees import run_src_etl_hr_filter_employees
 
 SQL_PATH = r"src/etl/hr/filter_employees.sql"
@@ -31,11 +32,20 @@ def _bundle_params():
 
 @pytest.mark.parametrize('caseid, mapping', _bundle_params())
 def test_src_etl_hr_filter_employees_bundle(spark, caseid, mapping):
+    # load inputs
     for table, path in mapping.items():
-        assert os.path.exists(path), f'Missing CSV: {table}: {path}'
         df = load_csv_as_df(spark, path)
         df = normalize_csv_df(df, table_name=table)
         df.createOrReplaceTempView(table)
-    out = run_{wrapper_name}(spark)
-    assert out is not None
-    _ = out.count()
+
+    # run SQL
+    actual = run_src_etl_hr_filter_employees(spark)
+
+    # expected output file
+    expected_path = os.path.join(MODULE_FOLDER, f"expected_{caseid}.csv")
+    assert os.path.exists(expected_path), f"Missing expected output: {expected_path}"
+
+    expected = load_csv_as_df(spark, expected_path)
+    expected = normalize_csv_df(expected)
+
+    assert_df_equal(actual, expected, msg=f'src_etl_hr_filter_employees - {caseid}')
